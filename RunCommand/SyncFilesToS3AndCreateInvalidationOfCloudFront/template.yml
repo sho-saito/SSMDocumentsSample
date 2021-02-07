@@ -1,0 +1,40 @@
+---
+schemaVersion: "2.2"
+description: "Sync Files to S3 And Create Invalidation of CloudFront."
+parameters:
+  SourcePath:
+    type: String
+    description: "(Required) The path of directory in EC2 instance where you want to sync into s3 bucket , like '/var/static_files'"
+    # TDOD:
+    # allowedPattern:
+  BucketName:
+    type: String
+    description: "(Required) The name of the S3 bucket you want to sync into, like 'BUCKET_NAME'. You can also specify a path with it, like 'BUCKET_NAME/PATH'"
+    # TDOD:
+    # allowedPattern:
+  DistributionID:
+    type: String
+    description: "(Optional) The ID of CloudFront Distribution which you want to create invalidation after sync. The invalidation will be created with path option of '/*'."
+    default:
+    # TDOD:
+    # allowedPattern:
+mainSteps:
+  - name: SyncIntoS3
+    action: aws:runShellScript
+    onFailure: Abort
+    inputs:
+      runCommand:
+        - aws s3 sync --exact-timestamps --dryrun {{ SourcePath }} s3://{{ BucketName }} > /tmp/dryrun
+        - if [ ! -s /tmp/dryrun ]; then ( echo "Nothing to sync." & rm /tmp/dryrun ) && exit 0; fi
+        - echo "aws s3 sync start(backup of "{{ SourcePath }}")... `date "+%Y/%m/%d %H:%M:%S"`"
+        - aws s3 sync --exact-timestamps {{ SourcePath }} s3://{{ BucketName }}
+        - echo "aws s3 sync done(backup of "{{ SourcePath }}")... `date "+%Y/%m/%d %H:%M:%S"`"
+    nextStep: CreateInvalidation
+  - action: aws:runShellScript
+    name: CreateInvalidation
+    inputs:
+      runCommand:
+        - if [ -z "{{ DistributionID }}" ]; then echo "No Distribution ID." && exit 0; fi
+        - if [ ! -f /tmp/dryrun ]; then echo "Nothing to invalidate in CloudFront cache." && exit 0; fi
+        - if [ -f /tmp/dryrun ]; then rm /tmp/dryrun; fi
+        - aws cloudfront create-invalidation --distribution-id {{ DistributionID }} --paths "/*"
