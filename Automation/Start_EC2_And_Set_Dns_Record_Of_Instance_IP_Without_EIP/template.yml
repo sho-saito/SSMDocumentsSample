@@ -1,0 +1,70 @@
+description: Start EC2 And Set Dns Record Of Instance IP Without EIP
+schemaVersion: "0.3"
+assumeRole: <ARN of IAM Role to use while executing this document>
+parameters:
+  InstanceID:
+    type: StringList
+    description: (Required) Target EC2 Instance to start.
+  HostedZoneID:
+    type: String
+    description: (Required) Route53 Hosted Zone ID to add DNS Record in.
+  DomainName:
+    type: String
+    description: (Required) DNS Record Name to add.
+mainSteps:
+  - name: StartEC2
+    action: "aws:changeInstanceState"
+    inputs:
+      InstanceIds: "{{InstanceID}}"
+      DesiredState: running
+      CheckStateOnly: false
+  - name: GetEC2InstanceIP
+    action: "aws:executeAwsApi"
+    inputs:
+      Service: ec2
+      Api: DescribeInstances
+      InstanceIds: "{{InstanceID}}"
+    outputs:
+      - Selector: "$.Reservations[0].Instances[0].PublicIpAddress"
+        Type: String
+        Name: IP
+  - name: AddRoute53Record
+    action: "aws:executeScript"
+    inputs:
+      Runtime: python3.7
+      Handler: script_handler
+      Script: |-
+        import boto3
+        import json
+
+        def script_handler(events, context):
+
+            IP = events["IP"]
+            HostedZoneID = events["HostedZoneID"]
+            DomainName = events["DomainName"]
+
+            client = boto3.client("route53")
+
+            response = client.change_resource_record_sets(
+                HostedZoneId=HostedZoneID,
+                ChangeBatch={
+                    "Changes": [
+                        {
+                            "Action": "UPSERT",
+                            "ResourceRecordSet": {
+                                "Name": DomainName,
+                                "Type": "A",
+                                "TTL": 300,
+                                "ResourceRecords": [
+                                    {"Value": IP},
+                                ],
+                            },
+                        },
+                    ]
+                },
+            )
+            print(response)
+      InputPayload:
+        IP: "{{GetEC2InstanceIP.IP}}"
+        HostedZoneID: "{{HostedZoneID}}"
+        DomainName: "{{DomainName}}"
